@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leafline: houseplants delivered</title>
+<style>
+  :root{--bg:#eef2ea;--ink:#1b2a22;--muted:#5b6b60;--leaf:#2f6b3a;--leaf-d:#1f4a28;--line:#cdd8c8;--card:#fbfdf9;--err:#a03030}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+  header{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between;padding:1rem 1.5rem;border-bottom:2px solid var(--ink)}
+  h1{margin:0;font:700 1.6rem Georgia,serif;letter-spacing:-.02em}
+  main{display:grid;grid-template-columns:1fr 320px;gap:1.5rem;padding:1.5rem;max-width:1200px;margin:auto}
+  @media(max-width:860px){main{grid-template-columns:1fr}}
+  input,select,button{font:inherit;padding:.5rem .7rem;border:1px solid var(--line);border-radius:6px;background:#fff}
+  button{background:var(--leaf);color:#fff;border-color:var(--leaf);cursor:pointer}
+  button:hover{background:var(--leaf-d)} button.ghost{background:transparent;color:var(--ink);border-color:var(--ink)}
+  :focus-visible{outline:3px solid #f2b705;outline-offset:2px}
+  .tools{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:1rem}
+  .item{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1rem;display:flex;flex-direction:column;gap:.4rem}
+  .item h3{margin:0;font:600 1.05rem Georgia,serif}.muted{color:var(--muted);font-size:.9rem}
+  aside{background:var(--card);border:1px solid var(--ink);border-radius:10px;padding:1rem;align-self:start}
+  aside h2{margin:0 0 .5rem;font:700 1.2rem Georgia,serif}
+  .row{display:flex;justify-content:space-between;gap:.5rem;padding:.3rem 0;border-bottom:1px dashed var(--line)}
+  #msg{min-height:1.5rem;font-weight:600}#msg.err{color:var(--err)}
+  .pager{display:flex;gap:.5rem;align-items:center;margin-top:1rem}
+  dialog{border:2px solid var(--ink);border-radius:10px}
+  dialog form{display:grid;gap:.6rem;min-width:260px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Leafline</h1>
+  <div><a href="/soap-console" class="muted" style="margin-right:1rem">SOAP console</a><span id="who" class="muted">Signed out</span>
+    <button class="ghost" id="authBtn">Sign in</button></div>
+</header>
+<main>
+  <section>
+    <div class="tools">
+      <input id="q" type="search" placeholder="Search plants" aria-label="Search plants">
+      <select id="cat" aria-label="Category">
+        <option value="">All plants</option><option>indoor</option><option>succulent</option>
+        <option>hanging</option><option>large</option></select>
+      <button id="go">Search</button>
+    </div>
+    <p id="msg" role="status"></p>
+    <div class="grid" id="grid"></div>
+    <div class="pager">
+      <button class="ghost" id="prev">Previous</button><span id="pg" class="muted"></span>
+      <button class="ghost" id="next">Next</button>
+    </div>
+  </section>
+  <aside>
+    <h2>Your cart</h2>
+    <div id="cart"><p class="muted">Sign in to start a cart.</p></div>
+    <p><strong>Total: $<span id="total">0.00</span></strong></p>
+    <button id="checkout">Place order</button>
+  </aside>
+</main>
+
+<dialog id="dlg">
+  <form method="dialog" id="authForm">
+    <h2 style="margin:0">Sign in or create an account</h2>
+    <input id="email" type="email" placeholder="Email" required autocomplete="email">
+    <input id="pw" type="password" placeholder="Password (6+ characters)" required minlength="6" autocomplete="current-password">
+    <div style="display:flex;gap:.5rem"><button value="login">Sign in</button>
+      <button value="register" class="ghost">Create account</button></div>
+  </form>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+let token = sessionStorage.getItem("token"), page = 1, pages = 1;
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {...opts,
+    headers: {"Content-Type": "application/json", ...(token ? {Authorization: "Bearer " + token} : {})}});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Something went wrong.");
+  return data;
+}
+const say = (t, err) => { $("msg").textContent = t; $("msg").className = err ? "err" : ""; };
+
+async function loadProducts() {
+  const p = new URLSearchParams({page, q: $("q").value, category: $("cat").value});
+  const d = await api("/api/products?" + p);
+  pages = Math.max(1, Math.ceil(d.total / 12));
+  $("pg").textContent = `Page ${d.page} of ${pages}`;
+  $("grid").innerHTML = d.products.map(x => `<div class="item"><h3>${x.name}</h3>
+    <span class="muted">${x.category}</span><strong>$${x.price.toFixed(2)}</strong>
+    <button data-id="${x.id}">Add to cart</button></div>`).join("") || "<p>No plants match that search.</p>";
+}
+async function loadCart() {
+  if (!token) return;
+  const c = await api("/api/cart");
+  $("cart").innerHTML = c.items.map(i => `<div class="row"><span>${i.name} × ${i.qty}</span>
+    <button class="ghost" data-rm="${i.id}" aria-label="Remove ${i.name}">Remove</button></div>`).join("")
+    || '<p class="muted">Your cart is empty.</p>';
+  $("total").textContent = c.total.toFixed(2);
+}
+function setUser(email) {
+  $("who").textContent = email || "Signed out";
+  $("authBtn").textContent = email ? "Sign out" : "Sign in";
+}
+$("grid").onclick = async e => {
+  const id = e.target.dataset.id; if (!id) return;
+  if (!token) return $("dlg").showModal();
+  try { await api("/api/cart", {method: "POST", body: JSON.stringify({product_id: +id, qty: 1})});
+        say("Added to cart."); loadCart(); } catch (x) { say(x.message, true); }
+};
+$("cart").onclick = async e => {
+  if (e.target.dataset.rm) { await api("/api/cart/" + e.target.dataset.rm, {method: "DELETE"}); loadCart(); }
+};
+$("checkout").onclick = async () => {
+  if (!token) return $("dlg").showModal();
+  try { const o = await api("/api/checkout", {method: "POST"});
+        say(`Order #${o.order_id} placed for $${o.total.toFixed(2)}.`); loadCart(); }
+  catch (x) { say(x.message, true); }
+};
+$("authBtn").onclick = () => {
+  if (token) { token = null; sessionStorage.clear(); setUser(); $("cart").innerHTML = ""; $("total").textContent = "0.00"; }
+  else $("dlg").showModal();
+};
+$("authForm").onsubmit = async e => {
+  const action = e.submitter.value;
+  try {
+    const d = await api("/api/" + action, {method: "POST", body: JSON.stringify({email: $("email").value, password: $("pw").value})});
+    token = d.token; sessionStorage.setItem("token", token); sessionStorage.setItem("email", d.email);
+    setUser(d.email); say(action === "login" ? "Signed in." : "Account created."); loadCart();
+  } catch (x) { say(x.message, true); }
+};
+$("go").onclick = () => { page = 1; loadProducts(); };
+$("prev").onclick = () => { if (page > 1) { page--; loadProducts(); } };
+$("next").onclick = () => { if (page < pages) { page++; loadProducts(); } };
+setUser(sessionStorage.getItem("email")); loadProducts(); loadCart();
+</script>
+</body>
+</html>

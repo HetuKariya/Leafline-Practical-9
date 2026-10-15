@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leafline SOAP console</title>
+<style>
+  :root{--bg:#eef2ea;--ink:#1b2a22;--muted:#5b6b60;--leaf:#2f6b3a;--leaf-d:#1f4a28;--line:#cdd8c8;--card:#fbfdf9;--err:#a03030;--code:#14201a;--codeink:#d9ead7}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+  header{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between;padding:1rem 1.5rem;border-bottom:2px solid var(--ink)}
+  h1{margin:0;font:700 1.6rem Georgia,serif;letter-spacing:-.02em}
+  h1 small{font:500 1rem system-ui,sans-serif;color:var(--muted);letter-spacing:0}
+  h2{margin:0 0 .6rem;font:700 1.15rem Georgia,serif}
+  nav a{color:var(--leaf-d);margin-left:1rem;font-weight:600}
+  main{display:grid;grid-template-columns:380px 1fr;gap:1.5rem;padding:1.5rem;max-width:1300px;margin:auto}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1rem}
+  .card.strong{border-color:var(--ink)}
+  label{display:block;font-size:.85rem;font-weight:600;margin:.6rem 0 .15rem}
+  input,select,button{font:inherit;padding:.5rem .7rem;border:1px solid var(--line);border-radius:6px;background:#fff;width:100%}
+  button{background:var(--leaf);color:#fff;border-color:var(--leaf);cursor:pointer;width:auto}
+  button:hover{background:var(--leaf-d)} button.ghost{background:transparent;color:var(--ink);border-color:var(--ink)}
+  button:disabled{opacity:.6;cursor:wait}
+  :focus-visible{outline:3px solid #f2b705;outline-offset:2px}
+  .btns{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1rem}
+  .hint{color:var(--muted);font-size:.85rem;margin:.3rem 0 0}
+  pre{margin:.4rem 0 0;background:var(--code);color:var(--codeink);padding:.8rem;border-radius:8px;overflow:auto;font:13px/1.45 ui-monospace,Consolas,monospace;max-height:340px;white-space:pre}
+  pre.fault{border-left:5px solid #e07070}
+  details.entry{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.6rem .9rem;margin-bottom:.8rem}
+  details.entry[data-ok="false"]{border-color:var(--err)}
+  summary{cursor:pointer;font-weight:600}
+  .tag{font:600 .75rem ui-monospace,Consolas,monospace;padding:.1rem .45rem;border-radius:99px;background:#dfeadb;margin-left:.4rem}
+  .tag.bad{background:#f3d6d6;color:var(--err)}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
+  @media(max-width:1100px){.cols{grid-template-columns:1fr}}
+  .cols h3{margin:.6rem 0 0;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  .parsed ul{margin:.2rem 0 .2rem 1rem;padding-left:.8rem;border-left:2px solid var(--line);list-style:none}
+  .parsed b{color:var(--leaf-d)}
+  .parsed .err{color:var(--err);font-weight:700}
+  .empty{color:var(--muted)}
+  #token{font-family:ui-monospace,Consolas,monospace;font-size:.85rem}
+</style>
+</head>
+<body>
+<header>
+  <h1>Leafline <small>SOAP console</small></h1>
+  <nav><a href="/">Storefront</a><a href="/soap/catalog/?wsdl" target="_blank" rel="noopener">Catalog WSDL</a><a href="/soap/auth/?wsdl" target="_blank" rel="noopener">Auth WSDL</a><a href="/soap/orders/?wsdl" target="_blank" rel="noopener">Orders WSDL</a></nav>
+</header>
+<main>
+  <section>
+    <div class="card strong">
+      <h2>1. Build a request</h2>
+      <label for="op">Operation</label>
+      <select id="op"></select>
+      <div id="fields"></div>
+      <label for="token">AuthHeader token <span class="hint" style="display:inline">(filled by Login / Register)</span></label>
+      <input id="token" autocomplete="off" placeholder="sent in the SOAP header when not empty">
+      <div class="btns">
+        <button id="send">Send SOAP request</button>
+        <button id="demo" class="ghost">Run full demo</button>
+        <button id="clear" class="ghost">Clear log</button>
+      </div>
+      <p class="hint">Every call is a real <code>POST /soap/&lt;service&gt;/</code> (the gateway routes it to the right microservice) carrying an XML envelope.</p>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <h2>Request preview</h2>
+      <pre id="preview"></pre>
+    </div>
+  </section>
+  <section>
+    <h2>2. Transcript</h2>
+    <div id="log"><p class="empty">Nothing sent yet. Pick an operation and press <em>Send</em>, or run the full demo.</p></div>
+  </section>
+</main>
+
+<script>
+const NS = "http://leafline.example.com/soap";
+// svc: which microservice handles it; auth: operation expects the AuthHeader SOAP header
+const OPS = {
+  ListCategories:  {svc: "catalog", params: []},
+  SearchProducts:  {svc: "catalog", params: [["query","text","Monstera"],["category","text",""],["page","number","1"]]},
+  GetProduct:      {svc: "catalog", params: [["product_id","number","1"]]},
+  CheckStock:      {svc: "catalog", params: [["product_id","number","1"],["qty","number","5"]]},
+  Register:        {svc: "auth", params: [["email","text",""],["password","password","secret123"]]},
+  Login:           {svc: "auth", params: [["email","text",""],["password","password","secret123"]]},
+  ViewCart:        {svc: "orders", auth: true, params: []},
+  AddToCart:       {svc: "orders", auth: true, params: [["product_id","number","1"],["qty","number","2"]]},
+  RemoveFromCart:  {svc: "orders", auth: true, params: [["product_id","number","1"]]},
+  Checkout:        {svc: "orders", auth: true, params: []},
+  ListOrders:      {svc: "orders", auth: true, params: []},
+};
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
+function buildEnvelope(op, values, token){
+  const header = token ? `\n  <soapenv:Header>\n    <ns:AuthHeader>\n      <ns:token>${esc(token)}</ns:token>\n    </ns:AuthHeader>\n  </soapenv:Header>` : "";
+  const args = Object.entries(values).filter(([,v]) => v !== "")
+    .map(([k,v]) => `\n      <ns:${k}>${esc(v)}</ns:${k}>`).join("");
+  const body = args ? `<ns:${op}>${args}\n    </ns:${op}>` : `<ns:${op}/>`;
+  return `<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="${NS}">${header}\n  <soapenv:Body>\n    ${body}\n  </soapenv:Body>\n</soapenv:Envelope>`;
+}
+
+function prettyXml(text){
+  const doc = new DOMParser().parseFromString(text, "text/xml");
+  if (doc.querySelector("parsererror")) return text;
+  const walk = (n, d) => {
+    const pad = "  ".repeat(d);
+    const attrs = [...n.attributes].map(a => ` ${a.name}="${esc(a.value)}"`).join("");
+    const kids = [...n.childNodes].filter(c => c.nodeType === 1);
+    if (!kids.length) {
+      const t = n.textContent;
+      return t === "" ? `${pad}<${n.nodeName}${attrs}/>` : `${pad}<${n.nodeName}${attrs}>${esc(t)}</${n.nodeName}>`;
+    }
+    return `${pad}<${n.nodeName}${attrs}>\n${kids.map(k => walk(k, d+1)).join("\n")}\n${pad}</${n.nodeName}>`;
+  };
+  return walk(doc.documentElement, 0);
+}
+
+function parsedHtml(doc){
+  const body = [...doc.documentElement.children].find(c => c.localName === "Body");
+  const first = body && body.firstElementChild;
+  if (!first) return "";
+  const kids = el => [...el.children];
+  if (first.localName === "Fault"){
+    const get = n => { const e = kids(first).find(c => c.localName === n); return e ? e.textContent : ""; };
+    return `<p class="err">SOAP Fault: ${esc(get("faultcode"))}</p><p>${esc(get("faultstring"))}</p>`;
+  }
+  const tree = el => {
+    const k = kids(el);
+    if (!k.length) return esc(el.textContent);
+    return "<ul>" + k.map(c => `<li><b>${esc(c.localName)}</b>${kids(c).length ? "" : ": "}${tree(c)}</li>`).join("") + "</ul>";
+  };
+  return tree(first);
+}
+
+function readForm(){
+  const op = $("op").value, values = {};
+  for (const [name] of OPS[op].params) values[name] = $("p_" + name).value.trim();
+  return {op, values};
+}
+
+function renderFields(){
+  const op = $("op").value;
+  $("fields").innerHTML = OPS[op].params.map(([name,type,def]) => {
+    let value = def;
+    if (name === "email") value = $("fields").dataset.email || (`student${Math.floor(Math.random()*1e5)}@example.com`);
+    return `<label for="p_${name}">${name}</label><input id="p_${name}" type="${type === "number" ? "number" : type}" value="${esc(value)}" ${type==="number"?'min="0"':""}>`;
+  }).join("") || '<p class="hint">This operation takes no parameters.</p>';
+  const em = $("p_email");
+  if (em) { $("fields").dataset.email = em.value; em.addEventListener("input", () => { $("fields").dataset.email = em.value; }); }
+  document.querySelectorAll("#fields input").forEach(i => i.addEventListener("input", preview));
+  preview();
+}
+
+function preview(){
+  const {op, values} = readForm();
+  $("preview").textContent = buildEnvelope(op, values, $("token").value.trim());
+}
+
+async function call(op, values, token){
+  const xml = buildEnvelope(op, values, token);
+  const t0 = performance.now();
+  let status = 0, text = "";
+  try {
+    const res = await fetch(`/soap/${OPS[op].svc}/`, {method:"POST", headers:{"Content-Type":"text/xml; charset=utf-8","SOAPAction":op}, body: xml});
+    status = res.status; text = await res.text();
+  } catch (e) { text = `Network error: ${e.message}`; }
+  const ms = Math.round(performance.now() - t0);
+  const doc = new DOMParser().parseFromString(text, "text/xml");
+  const isXml = !doc.querySelector("parsererror");
+  const isFault = isXml && doc.getElementsByTagNameNS("http://schemas.xmlsoap.org/soap/envelope/", "Fault").length > 0;
+  const ok = status === 200 && !isFault;
+  const entry = document.createElement("details");
+  entry.className = "entry"; entry.open = true; entry.dataset.ok = ok;
+  entry.innerHTML = `<summary>${ok ? "✔" : "✖"} ${esc(op)} <span class="tag ${ok?"":"bad"}">HTTP ${status||"ERR"}</span><span class="tag">${ms} ms</span></summary>
+    <div class="parsed" style="margin-top:.5rem">${isXml ? parsedHtml(doc) : esc(text)}</div>
+    <div class="cols"><div><h3>Request envelope</h3><pre>${esc(xml)}</pre></div>
+    <div><h3>Response envelope</h3><pre class="${ok?"":"fault"}">${esc(isXml ? prettyXml(text) : text)}</pre></div></div>`;
+  const log = $("log");
+  if (log.querySelector(".empty")) log.innerHTML = "";
+  log.prepend(entry);
+  let result = null;
+  if (ok) {
+    const tok = doc.getElementsByTagNameNS(NS, "token")[0];
+    if (tok && (op === "Register" || op === "Login")) { $("token").value = tok.textContent; result = tok.textContent; preview(); }
+  }
+  return {ok, result};
+}
+
+$("send").onclick = async () => {
+  const b = $("send"); b.disabled = true;
+  const {op, values} = readForm();
+  await call(op, values, $("token").value.trim());
+  b.disabled = false;
+};
+
+$("demo").onclick = async () => {
+  const b = $("demo"); b.disabled = true; $("send").disabled = true;
+  const email = `demo${Math.floor(Math.random()*1e6)}@example.com`;
+  const steps = [
+    ["ListCategories", {}, false],
+    ["SearchProducts", {query:"Monstera", category:"", page:"1"}, false],
+    ["GetProduct", {product_id:"1"}, false],
+    ["GetProduct", {product_id:"99999"}, false],            // deliberate SOAP Fault
+    ["Register", {email, password:"secret123"}, false],
+    ["ViewCart", {}, false],                                // no header: Unauthorized fault
+    ["AddToCart", {product_id:"1", qty:"2"}, true],
+    ["AddToCart", {product_id:"4", qty:"1"}, true],
+    ["ViewCart", {}, true],
+    ["Checkout", {}, true],
+    ["ListOrders", {}, true],
+  ];
+  for (const [op, values, useToken] of steps) {
+    await call(op, values, useToken ? $("token").value.trim() : "");
+  }
+  b.disabled = false; $("send").disabled = false;
+};
+
+$("clear").onclick = () => { $("log").innerHTML = '<p class="empty">Log cleared.</p>'; };
+$("token").addEventListener("input", preview);
+$("op").innerHTML = Object.keys(OPS).map(k => `<option value="${k}">${k}${OPS[k].auth ? "  (needs token)" : ""}</option>`).join("");
+$("op").addEventListener("change", renderFields);
+renderFields();
+</script>
+</body>
+</html>

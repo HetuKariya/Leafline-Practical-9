@@ -1,0 +1,15 @@
+# Local Jenkins for the practical:   cd jenkins && docker compose up -d --build
+# UI: http://localhost:8080   (first-run password: docker compose exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword)
+name: jenkins
+services:
+  jenkins:
+    build: .
+    user: root                      # needed to use the mounted Docker socket
+    ports:
+      - "8080:8080"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock   # Windows + Docker Desktop: this path works too
+    restart: unless-stopped
+volumes:
+  jenkins_home:

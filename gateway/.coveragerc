@@ -1,0 +1,14 @@
+[run]
+branch = True
+omit =
+    tests/*
+    */tests/*
+    reports/*
+
+[report]
+# Pipeline quality gate: the Jenkins build fails if a service drops below this.
+fail_under = 80
+show_missing = True
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:

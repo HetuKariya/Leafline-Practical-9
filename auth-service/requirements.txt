@@ -1,0 +1,4 @@
+flask==3.0.3
+spyne==2.13.16
+lxml==5.2.1
+gunicorn==22.0.0

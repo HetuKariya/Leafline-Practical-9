@@ -1,0 +1,17 @@
+# Keep the build context small and the images free of local junk.
+__pycache__/
+*.py[cod]
+*.db
+*.db-wal
+*.db-shm
+.venv*/
+venv/
+.pytest_cache/
+.coverage
+reports/
+.git
+.gitignore
+.dockerignore
+Dockerfile
+*.md
+.env
