@@ -1,5 +1,5 @@
 // Leafline Microservices CI/CD Pipeline — Windows Jenkins
-// Uses the same PATH+DOCKER pattern as your working Jenkinsfile.
+// Uses PATH+DOCKER and docker-compose.
 
 def SERVICES = [
     'catalog-service',
@@ -45,7 +45,7 @@ docker --version
 if errorlevel 1 exit /b 1
 
 echo ===== Docker Compose =====
-docker compose version
+docker-compose version
 if errorlevel 1 exit /b 1
 
 echo ===== Docker Engine =====
@@ -128,7 +128,7 @@ exit /b 0
                 withEnv(['PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin']) {
                     bat '''
 @echo off
-docker compose --profile test build
+docker-compose --profile test build
 if errorlevel 1 exit /b 1
 '''
                 }
@@ -138,7 +138,8 @@ if errorlevel 1 exit /b 1
         stage('SOAP Integration Tests') {
             steps {
                 script {
-                    def gatewayPort = 20000 + (env.BUILD_NUMBER.toInteger() % 1000)
+                    def gatewayPort =
+                        20000 + (env.BUILD_NUMBER.toInteger() % 1000)
 
                     withEnv([
                         'PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin',
@@ -148,7 +149,7 @@ if errorlevel 1 exit /b 1
 @echo off
 
 echo Starting application stack...
-docker compose up -d --wait
+docker-compose up -d --wait
 if errorlevel 1 exit /b 1
 
 if not exist "reports\\integration" mkdir "reports\\integration"
@@ -157,7 +158,7 @@ docker rm -f it-%BUILD_NUMBER% >NUL 2>&1
 
 echo Running SOAP integration tests...
 
-docker compose --profile test run --no-deps --name it-%BUILD_NUMBER% smoke-tests sh -c "mkdir -p /reports && pytest -v --junitxml=/reports/integration.xml -p no:cacheprovider"
+docker-compose --profile test run --no-deps --name it-%BUILD_NUMBER% smoke-tests sh -c "mkdir -p /reports && pytest -v --junitxml=/reports/integration.xml -p no:cacheprovider"
 set "TEST_RC=%ERRORLEVEL%"
 
 docker cp it-%BUILD_NUMBER%:/reports/. "reports\\integration\\"
@@ -180,10 +181,11 @@ exit /b 0
                     withEnv(['PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin']) {
                         bat '''
 @echo off
+
 if not exist reports mkdir reports
 
-docker compose logs --no-color > reports\\compose.log 2>&1
-docker compose --profile test down -v --remove-orphans >NUL 2>&1
+docker-compose logs --no-color > reports\\compose.log 2>&1
+docker-compose --profile test down -v --remove-orphans >NUL 2>&1
 
 exit /b 0
 '''
@@ -197,7 +199,11 @@ exit /b 0
                 expression {
                     env.BRANCH_NAME == 'main' ||
                     env.GIT_LOCAL_BRANCH == 'main' ||
-                    env.GIT_BRANCH in ['main', 'origin/main', 'refs/remotes/origin/main']
+                    env.GIT_BRANCH in [
+                        'main',
+                        'origin/main',
+                        'refs/remotes/origin/main'
+                    ]
                 }
             }
 
@@ -210,6 +216,7 @@ exit /b 0
                 ]) {
                     bat '''
 @echo off
+
 echo Deploying Leafline...
 
 docker-compose up -d --build --wait
@@ -316,7 +323,7 @@ exit /b 0
                 bat """
 @echo off
 
-docker compose --profile test down -v --remove-orphans >NUL 2>&1
+docker-compose --profile test down -v --remove-orphans >NUL 2>&1
 
 for %%S in (catalog-service auth-service order-service gateway) do docker image rm -f leafline/%%S:test >NUL 2>&1
 
