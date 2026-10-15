@@ -212,7 +212,7 @@ exit /b 0
 @echo off
 echo Deploying Leafline...
 
-docker compose up -d --build --wait
+docker-compose up -d --build --wait
 if errorlevel 1 exit /b 1
 
 echo Deployment successful.
