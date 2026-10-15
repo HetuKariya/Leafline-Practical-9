@@ -1,9 +1,5 @@
-// Leafline Microservices CI/CD Pipeline
-// Windows Jenkins + Docker Desktop
-//
-// Checkout -> Build test images -> Unit tests + coverage
-// -> Build application images -> SOAP integration tests
-// -> Deploy on main branch
+// Leafline Microservices CI/CD Pipeline — Windows Jenkins
+// Uses the same PATH+DOCKER pattern as your working Jenkinsfile.
 
 def SERVICES = [
     'catalog-service',
@@ -12,12 +8,7 @@ def SERVICES = [
     'gateway'
 ]
 
-def DOCKER_BIN =
-    'C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin'
-
 pipeline {
-
-    // IMPORTANT: Use the same Jenkins node as the working project.
     agent {
         node {
             label 'local'
@@ -42,31 +33,29 @@ pipeline {
             steps {
                 checkout scm
 
-                withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                withEnv(['PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin']) {
                     bat '''
 @echo off
-echo ===== Docker installation =====
-
+echo ===== Docker executable =====
 where docker
 if errorlevel 1 exit /b 1
 
+echo ===== Docker version =====
 docker --version
 if errorlevel 1 exit /b 1
 
 echo ===== Docker Compose =====
-
 docker compose version
 if errorlevel 1 exit /b 1
 
 echo ===== Docker Engine =====
-
 docker version
 if errorlevel 1 exit /b 1
 
 if exist reports rmdir /s /q reports
 mkdir reports
 
-echo Docker verification successful.
+echo Docker is ready.
 '''
                 }
             }
@@ -81,7 +70,7 @@ echo Docker verification successful.
                         def service = svc
 
                         jobs[service] = {
-                            withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                            withEnv(['PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin']) {
                                 bat """
 @echo off
 docker build --target test -t leafline/${service}:test "${service}"
@@ -105,20 +94,17 @@ if errorlevel 1 exit /b 1
                         def service = svc
 
                         jobs[service] = {
-                            withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                            withEnv(['PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin']) {
                                 bat """
 @echo off
-
-if not exist "reports\\\\${service}" mkdir "reports\\\\${service}"
+if not exist "reports\\${service}" mkdir "reports\\${service}"
 
 docker rm -f ut-${service}-${env.BUILD_NUMBER} >NUL 2>&1
 
 docker run --name ut-${service}-${env.BUILD_NUMBER} leafline/${service}:test sh -c "mkdir -p /app/reports && pytest -q"
-
 set "TEST_RC=%ERRORLEVEL%"
 
-docker cp ut-${service}-${env.BUILD_NUMBER}:/app/reports/. "reports\\\\${service}\\\\"
-
+docker cp ut-${service}-${env.BUILD_NUMBER}:/app/reports/. "reports\\${service}\\"
 set "COPY_RC=%ERRORLEVEL%"
 
 docker rm -f ut-${service}-${env.BUILD_NUMBER} >NUL 2>&1
@@ -137,16 +123,13 @@ exit /b 0
             }
         }
 
-        stage('Build Application and Integration Images') {
+        stage('Build Application Images') {
             steps {
-                withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                withEnv(['PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin']) {
                     bat '''
 @echo off
-
 docker compose --profile test build
 if errorlevel 1 exit /b 1
-
-echo All application and integration images built.
 '''
                 }
             }
@@ -155,33 +138,29 @@ echo All application and integration images built.
         stage('SOAP Integration Tests') {
             steps {
                 script {
-                    def gatewayPort =
-                        20000 + (env.BUILD_NUMBER.toInteger() % 1000)
+                    def gatewayPort = 20000 + (env.BUILD_NUMBER.toInteger() % 1000)
 
                     withEnv([
-                        "PATH+DOCKER=${DOCKER_BIN}",
+                        'PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin',
                         "GATEWAY_PORT=${gatewayPort}"
                     ]) {
                         bat '''
 @echo off
 
-echo Starting Leafline services...
-
+echo Starting application stack...
 docker compose up -d --wait
 if errorlevel 1 exit /b 1
 
-if not exist "reports\\\\integration" mkdir "reports\\\\integration"
+if not exist "reports\\integration" mkdir "reports\\integration"
 
 docker rm -f it-%BUILD_NUMBER% >NUL 2>&1
 
 echo Running SOAP integration tests...
 
 docker compose --profile test run --no-deps --name it-%BUILD_NUMBER% smoke-tests sh -c "mkdir -p /reports && pytest -v --junitxml=/reports/integration.xml -p no:cacheprovider"
-
 set "TEST_RC=%ERRORLEVEL%"
 
-docker cp it-%BUILD_NUMBER%:/reports/. "reports\\\\integration\\\\"
-
+docker cp it-%BUILD_NUMBER%:/reports/. "reports\\integration\\"
 set "COPY_RC=%ERRORLEVEL%"
 
 docker rm -f it-%BUILD_NUMBER% >NUL 2>&1
@@ -189,7 +168,7 @@ docker rm -f it-%BUILD_NUMBER% >NUL 2>&1
 if not "%TEST_RC%"=="0" exit /b %TEST_RC%
 if not "%COPY_RC%"=="0" exit /b %COPY_RC%
 
-echo SOAP integration tests completed.
+echo SOAP integration tests passed.
 exit /b 0
 '''
                     }
@@ -198,12 +177,12 @@ exit /b 0
 
             post {
                 always {
-                    withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                    withEnv(['PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin']) {
                         bat '''
 @echo off
+if not exist reports mkdir reports
 
-docker compose logs --no-color > reports\\\\compose.log 2>&1
-
+docker compose logs --no-color > reports\\compose.log 2>&1
 docker compose --profile test down -v --remove-orphans >NUL 2>&1
 
 exit /b 0
@@ -218,24 +197,19 @@ exit /b 0
                 expression {
                     env.BRANCH_NAME == 'main' ||
                     env.GIT_LOCAL_BRANCH == 'main' ||
-                    env.GIT_BRANCH in [
-                        'main',
-                        'origin/main',
-                        'refs/remotes/origin/main'
-                    ]
+                    env.GIT_BRANCH in ['main', 'origin/main', 'refs/remotes/origin/main']
                 }
             }
 
             steps {
                 withEnv([
-                    "PATH+DOCKER=${DOCKER_BIN}",
+                    'PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin',
                     'COMPOSE_PROJECT_NAME=leafline',
                     'IMAGE_TAG=latest',
                     'GATEWAY_PORT=5000'
                 ]) {
                     bat '''
 @echo off
-
 echo Deploying Leafline...
 
 docker compose up -d --build --wait
@@ -249,7 +223,6 @@ echo Deployment successful.
     }
 
     post {
-
         always {
             junit(
                 allowEmptyResults: true,
@@ -275,26 +248,19 @@ $services = @(
 Write-Output '============= Coverage Summary ============='
 
 foreach ($service in $services) {
-
     $path = "reports/$service/coverage.xml"
 
     if (Test-Path $path) {
-        try {
-            [xml]$doc = Get-Content $path -Raw
+        [xml]$doc = Get-Content $path -Raw
 
-            $line = [double]$doc.coverage.GetAttribute('line-rate') * 100
-            $branch = [double]$doc.coverage.GetAttribute('branch-rate') * 100
+        $line = [double]$doc.coverage.GetAttribute('line-rate') * 100
+        $branch = [double]$doc.coverage.GetAttribute('branch-rate') * 100
 
-            Write-Output (
-                '{0,-16} Line {1:N1}%  Branch {2:N1}%' -f
-                $service, $line, $branch
-            )
-        }
-        catch {
-            Write-Output "$service : Unable to parse coverage report"
-        }
-    }
-    else {
+        Write-Output (
+            '{0,-16} Line {1:N1}% Branch {2:N1}%' -f
+            $service, $line, $branch
+        )
+    } else {
         Write-Output "$service : Coverage report unavailable"
     }
 }
@@ -320,7 +286,7 @@ exit /b 0
                             allowMissing: true
                         ])
                     } catch (Throwable err) {
-                        echo "HTML coverage publication skipped for ${svc}."
+                        echo "HTML Publisher unavailable for ${svc}."
                     }
                 }
 
@@ -338,15 +304,15 @@ exit /b 0
         }
 
         success {
-            echo 'SUCCESS: Leafline build, unit tests and SOAP integration tests passed.'
+            echo 'SUCCESS: Leafline build and tests completed.'
         }
 
         failure {
-            echo 'FAILED: Check Console Output, Test Result and reports/compose.log.'
+            echo 'FAILED: Check Console Output and archived test reports.'
         }
 
         cleanup {
-            withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+            withEnv(['PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin']) {
                 bat """
 @echo off
 
@@ -354,7 +320,9 @@ docker compose --profile test down -v --remove-orphans >NUL 2>&1
 
 for %%S in (catalog-service auth-service order-service gateway) do docker image rm -f leafline/%%S:test >NUL 2>&1
 
-docker image rm -f leafline/integration-tests:latest >NUL 2>&1
+docker image rm -f leafline/integration-tests:${env.BUILD_NUMBER} >NUL 2>&1
+
+for %%S in (catalog-service auth-service order-service gateway) do docker image rm -f leafline/%%S:${env.BUILD_NUMBER} >NUL 2>&1
 
 exit /b 0
 """
