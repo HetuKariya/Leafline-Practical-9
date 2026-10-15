@@ -32,6 +32,9 @@ pipeline {
     environment {
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         COMPOSE_PROJECT_NAME = "leafline-ci-${env.BUILD_NUMBER}"
+
+        // Make Docker CLI available to Windows Jenkins build steps
+        PATH = 'C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin'
     }
 
     stages {
