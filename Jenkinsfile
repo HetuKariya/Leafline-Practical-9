@@ -1,5 +1,9 @@
 // Leafline Microservices CI/CD Pipeline — Windows Jenkins
 // Uses PATH+DOCKER and docker-compose.
+//
+// Checkout -> Build test images -> Unit tests + coverage
+// -> Build application images -> SOAP integration tests
+// -> Deploy on main branch
 
 def SERVICES = [
     'catalog-service',
@@ -97,6 +101,7 @@ if errorlevel 1 exit /b 1
                             withEnv(['PATH+DOCKER=C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin']) {
                                 bat """
 @echo off
+
 if not exist "reports\\${service}" mkdir "reports\\${service}"
 
 docker rm -f ut-${service}-${env.BUILD_NUMBER} >NUL 2>&1
@@ -104,7 +109,7 @@ docker rm -f ut-${service}-${env.BUILD_NUMBER} >NUL 2>&1
 docker run --name ut-${service}-${env.BUILD_NUMBER} leafline/${service}:test sh -c "mkdir -p /app/reports && pytest -q"
 set "TEST_RC=%ERRORLEVEL%"
 
-docker cp ut-${service}-${env.BUILD_NUMBER}:/app/reports/. "reports\\${service}\\"
+docker cp ut-${service}-${env.BUILD_NUMBER}:/app/reports/. "reports\\${service}"
 set "COPY_RC=%ERRORLEVEL%"
 
 docker rm -f ut-${service}-${env.BUILD_NUMBER} >NUL 2>&1
@@ -149,6 +154,7 @@ if errorlevel 1 exit /b 1
 @echo off
 
 echo Starting application stack...
+
 docker-compose up -d --wait
 if errorlevel 1 exit /b 1
 
@@ -161,7 +167,7 @@ echo Running SOAP integration tests...
 docker-compose --profile test run --no-deps --name it-%BUILD_NUMBER% smoke-tests sh -c "mkdir -p /reports && pytest -v --junitxml=/reports/integration.xml -p no:cacheprovider"
 set "TEST_RC=%ERRORLEVEL%"
 
-docker cp it-%BUILD_NUMBER%:/reports/. "reports\\integration\\"
+docker cp it-%BUILD_NUMBER%:/reports/. "reports\\integration"
 set "COPY_RC=%ERRORLEVEL%"
 
 docker rm -f it-%BUILD_NUMBER% >NUL 2>&1
@@ -169,7 +175,7 @@ docker rm -f it-%BUILD_NUMBER% >NUL 2>&1
 if not "%TEST_RC%"=="0" exit /b %TEST_RC%
 if not "%COPY_RC%"=="0" exit /b %COPY_RC%
 
-echo SOAP integration tests passed.
+echo SOAP integration tests completed.
 exit /b 0
 '''
                     }
@@ -258,17 +264,23 @@ foreach ($service in $services) {
     $path = "reports/$service/coverage.xml"
 
     if (Test-Path $path) {
-        [xml]$doc = Get-Content $path -Raw
+        try {
+            [xml]$doc = Get-Content $path -Raw
 
-        $line = [double]$doc.coverage.GetAttribute('line-rate') * 100
-        $branch = [double]$doc.coverage.GetAttribute('branch-rate') * 100
+            $line = [double]$doc.coverage.GetAttribute('line-rate') * 100
+            $branch = [double]$doc.coverage.GetAttribute('branch-rate') * 100
 
-        Write-Output (
-            '{0,-16} Line {1:N1}% Branch {2:N1}%' -f
-            $service, $line, $branch
-        )
-    } else {
-        Write-Output "$service : Coverage report unavailable"
+            Write-Output (
+                '{0,-16} Line {1:N1}% Branch {2:N1}%' -f
+                $service, $line, $branch
+            )
+        }
+        catch {
+            Write-Output "$service : Coverage report could not be parsed."
+        }
+    }
+    else {
+        Write-Output "$service : Coverage report unavailable."
     }
 }
 '''
@@ -311,11 +323,17 @@ exit /b 0
         }
 
         success {
-            echo 'SUCCESS: Leafline build and tests completed.'
+            echo '''
+            SUCCESS: Leafline build completed.
+            Unit tests, coverage checks and SOAP integration tests passed.
+            '''
         }
 
         failure {
-            echo 'FAILED: Check Console Output and archived test reports.'
+            echo '''
+            FAILED: Check Console Output, Test Result,
+            the coverage summary and reports/compose.log.
+            '''
         }
 
         cleanup {
