@@ -1,16 +1,9 @@
-// Leafline Microservices CI/CD Pipeline for Windows Jenkins
+// Leafline Microservices CI/CD Pipeline
+// Windows Jenkins + Docker Desktop
 //
-// Pipeline:
 // Checkout -> Build test images -> Unit tests + coverage
 // -> Build application images -> SOAP integration tests
 // -> Deploy on main branch
-//
-// Requirements:
-// - Windows Jenkins agent
-// - Docker Desktop running Linux containers
-// - Docker CLI and Docker Compose v2 in PATH
-// - Jenkins plugins: Pipeline, Git, JUnit
-// - Optional: HTML Publisher and Coverage
 
 def SERVICES = [
     'catalog-service',
@@ -19,8 +12,17 @@ def SERVICES = [
     'gateway'
 ]
 
+def DOCKER_BIN =
+    'C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin'
+
 pipeline {
-    agent any
+
+    // IMPORTANT: Use the same Jenkins node as the working project.
+    agent {
+        node {
+            label 'local'
+        }
+    }
 
     options {
         timestamps()
@@ -32,35 +34,41 @@ pipeline {
     environment {
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         COMPOSE_PROJECT_NAME = "leafline-ci-${env.BUILD_NUMBER}"
-
-        // Make Docker CLI available to Windows Jenkins build steps
-        PATH = 'C:/Users/DELL/AppData/Local/Programs/DockerDesktop/resources/bin'
     }
 
     stages {
 
-        stage('Checkout and Verify Tools') {
+        stage('Checkout and Verify Docker') {
             steps {
                 checkout scm
 
-                bat '''
+                withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                    bat '''
 @echo off
-setlocal
+echo ===== Docker installation =====
 
-echo Checking Docker installation...
-docker version --format "Docker server {{.Server.Version}}"
+where docker
 if errorlevel 1 exit /b 1
 
-echo Checking Docker Compose...
+docker --version
+if errorlevel 1 exit /b 1
+
+echo ===== Docker Compose =====
+
 docker compose version
+if errorlevel 1 exit /b 1
+
+echo ===== Docker Engine =====
+
+docker version
 if errorlevel 1 exit /b 1
 
 if exist reports rmdir /s /q reports
 mkdir reports
 
-echo Environment verification complete.
-exit /b 0
+echo Docker verification successful.
 '''
+                }
             }
         }
 
@@ -73,11 +81,13 @@ exit /b 0
                         def service = svc
 
                         jobs[service] = {
-                            bat """
+                            withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                                bat """
 @echo off
 docker build --target test -t leafline/${service}:test "${service}"
 if errorlevel 1 exit /b 1
 """
+                            }
                         }
                     }
 
@@ -95,17 +105,20 @@ if errorlevel 1 exit /b 1
                         def service = svc
 
                         jobs[service] = {
-                            bat """
+                            withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                                bat """
 @echo off
 
-if not exist "reports\\${service}" mkdir "reports\\${service}"
+if not exist "reports\\\\${service}" mkdir "reports\\\\${service}"
 
 docker rm -f ut-${service}-${env.BUILD_NUMBER} >NUL 2>&1
 
 docker run --name ut-${service}-${env.BUILD_NUMBER} leafline/${service}:test sh -c "mkdir -p /app/reports && pytest -q"
+
 set "TEST_RC=%ERRORLEVEL%"
 
-docker cp ut-${service}-${env.BUILD_NUMBER}:/app/reports/. "reports\\${service}\\"
+docker cp ut-${service}-${env.BUILD_NUMBER}:/app/reports/. "reports\\\\${service}\\\\"
+
 set "COPY_RC=%ERRORLEVEL%"
 
 docker rm -f ut-${service}-${env.BUILD_NUMBER} >NUL 2>&1
@@ -115,6 +128,7 @@ if not "%COPY_RC%"=="0" exit /b %COPY_RC%
 
 exit /b 0
 """
+                            }
                         }
                     }
 
@@ -125,14 +139,16 @@ exit /b 0
 
         stage('Build Application and Integration Images') {
             steps {
-                bat '''
+                withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                    bat '''
 @echo off
 
 docker compose --profile test build
 if errorlevel 1 exit /b 1
 
-echo Application and integration-test images built.
+echo All application and integration images built.
 '''
+                }
             }
         }
 
@@ -142,7 +158,10 @@ echo Application and integration-test images built.
                     def gatewayPort =
                         20000 + (env.BUILD_NUMBER.toInteger() % 1000)
 
-                    withEnv(["GATEWAY_PORT=${gatewayPort}"]) {
+                    withEnv([
+                        "PATH+DOCKER=${DOCKER_BIN}",
+                        "GATEWAY_PORT=${gatewayPort}"
+                    ]) {
                         bat '''
 @echo off
 
@@ -151,7 +170,7 @@ echo Starting Leafline services...
 docker compose up -d --wait
 if errorlevel 1 exit /b 1
 
-if not exist "reports\\integration" mkdir "reports\\integration"
+if not exist "reports\\\\integration" mkdir "reports\\\\integration"
 
 docker rm -f it-%BUILD_NUMBER% >NUL 2>&1
 
@@ -161,7 +180,8 @@ docker compose --profile test run --no-deps --name it-%BUILD_NUMBER% smoke-tests
 
 set "TEST_RC=%ERRORLEVEL%"
 
-docker cp it-%BUILD_NUMBER%:/reports/. "reports\\integration\\"
+docker cp it-%BUILD_NUMBER%:/reports/. "reports\\\\integration\\\\"
+
 set "COPY_RC=%ERRORLEVEL%"
 
 docker rm -f it-%BUILD_NUMBER% >NUL 2>&1
@@ -169,7 +189,7 @@ docker rm -f it-%BUILD_NUMBER% >NUL 2>&1
 if not "%TEST_RC%"=="0" exit /b %TEST_RC%
 if not "%COPY_RC%"=="0" exit /b %COPY_RC%
 
-echo Integration tests completed.
+echo SOAP integration tests completed.
 exit /b 0
 '''
                     }
@@ -178,17 +198,17 @@ exit /b 0
 
             post {
                 always {
-                    bat '''
+                    withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                        bat '''
 @echo off
 
-if not exist reports mkdir reports
-
-docker compose logs --no-color > reports\\compose.log 2>&1
+docker compose logs --no-color > reports\\\\compose.log 2>&1
 
 docker compose --profile test down -v --remove-orphans >NUL 2>&1
 
 exit /b 0
 '''
+                    }
                 }
             }
         }
@@ -207,32 +227,30 @@ exit /b 0
             }
 
             steps {
-                script {
-                    withEnv([
-                        'COMPOSE_PROJECT_NAME=leafline',
-                        'IMAGE_TAG=latest',
-                        'GATEWAY_PORT=5000'
-                    ]) {
-                        bat '''
+                withEnv([
+                    "PATH+DOCKER=${DOCKER_BIN}",
+                    'COMPOSE_PROJECT_NAME=leafline',
+                    'IMAGE_TAG=latest',
+                    'GATEWAY_PORT=5000'
+                ]) {
+                    bat '''
 @echo off
 
-echo Deploying Leafline application...
+echo Deploying Leafline...
 
 docker compose up -d --build --wait
 if errorlevel 1 exit /b 1
 
-echo Deployment completed successfully.
+echo Deployment successful.
 '''
-                    }
                 }
             }
         }
     }
 
     post {
-        always {
-            echo 'Publishing JUnit test results...'
 
+        always {
             junit(
                 allowEmptyResults: true,
                 testResults: 'reports/*/junit.xml,reports/integration/integration.xml'
@@ -247,8 +265,6 @@ echo Deployment completed successfully.
                 writeFile(
                     file: 'coverage-summary.ps1',
                     text: '''
-$ErrorActionPreference = 'Continue'
-
 $services = @(
     'catalog-service',
     'auth-service',
@@ -256,44 +272,32 @@ $services = @(
     'gateway'
 )
 
-Write-Output '================ Coverage Summary ================'
+Write-Output '============= Coverage Summary ============='
 
 foreach ($service in $services) {
 
-    $path = Join-Path `
-        (Join-Path 'reports' $service) `
-        'coverage.xml'
+    $path = "reports/$service/coverage.xml"
 
-    if (Test-Path -LiteralPath $path) {
+    if (Test-Path $path) {
         try {
-            [xml]$doc = Get-Content -LiteralPath $path -Raw
+            [xml]$doc = Get-Content $path -Raw
 
-            $lineRate = [double]$doc.coverage.GetAttribute('line-rate')
-            $branchRate = [double]$doc.coverage.GetAttribute('branch-rate')
-
-            $line = '{0:N1}' -f ($lineRate * 100)
-            $branch = '{0:N1}' -f ($branchRate * 100)
+            $line = [double]$doc.coverage.GetAttribute('line-rate') * 100
+            $branch = [double]$doc.coverage.GetAttribute('branch-rate') * 100
 
             Write-Output (
-                '{0,-16} line {1,5}%   branch {2,5}%' -f
+                '{0,-16} Line {1:N1}%  Branch {2:N1}%' -f
                 $service, $line, $branch
             )
         }
         catch {
-            Write-Output (
-                '{0}: coverage parsing failed: {1}' -f
-                $service, $_.Exception.Message
-            )
+            Write-Output "$service : Unable to parse coverage report"
         }
     }
     else {
-        Write-Output (
-            '{0}: coverage report not found' -f $service
-        )
+        Write-Output "$service : Coverage report unavailable"
     }
 }
-
-exit 0
 '''
                 )
 
@@ -316,7 +320,7 @@ exit /b 0
                             allowMissing: true
                         ])
                     } catch (Throwable err) {
-                        echo "HTML Publisher unavailable for ${svc}."
+                        echo "HTML coverage publication skipped for ${svc}."
                     }
                 }
 
@@ -328,41 +332,33 @@ exit /b 0
                         ]]
                     )
                 } catch (Throwable err) {
-                    echo 'Coverage plugin unavailable; skipping coverage trend.'
+                    echo 'Coverage plugin unavailable; skipping coverage trends.'
                 }
             }
         }
 
         success {
-            echo '''
-            PIPELINE SUCCESSFUL!
-            All services were built and tested.
-            SOAP integration testing completed.
-            '''
+            echo 'SUCCESS: Leafline build, unit tests and SOAP integration tests passed.'
         }
 
         failure {
-            echo '''
-            PIPELINE FAILED!
-            Check Console Output, Test Result,
-            coverage summaries and reports/compose.log.
-            '''
+            echo 'FAILED: Check Console Output, Test Result and reports/compose.log.'
         }
 
         cleanup {
-            bat """
+            withEnv(["PATH+DOCKER=${DOCKER_BIN}"]) {
+                bat """
 @echo off
 
 docker compose --profile test down -v --remove-orphans >NUL 2>&1
 
 for %%S in (catalog-service auth-service order-service gateway) do docker image rm -f leafline/%%S:test >NUL 2>&1
 
-docker image rm -f leafline/integration-tests:${env.BUILD_NUMBER} >NUL 2>&1
-
-for %%S in (catalog-service auth-service order-service gateway) do docker image rm -f leafline/%%S:${env.BUILD_NUMBER} >NUL 2>&1
+docker image rm -f leafline/integration-tests:latest >NUL 2>&1
 
 exit /b 0
 """
+            }
         }
     }
 }
